@@ -1,47 +1,56 @@
 import keras
 
-class feGAN():
-    def __init__(self, data_dir='./data'):
+class o2mCycleGAN():
+    def __init__(self, atts, data_dir='./data'):
         self.img_shape = (64, 64, 3)
-        self.d_out_shape = (64 / 2**4, 64 / 2**4, 1)
+        self.d_out_shape = (64 / 2**3, 64 / 2**3, 1)
 
         optimizer = keras.optimizers.Adam(0.0001, 0.5)
 
-        self.d_A = self.__discriminator__()
-        self.d_B = self.__discriminator__()
+        # truth -> fake discriminators
+        self.d_TF_lst = [self.__discriminator__() for _ in atts]
+
+        # fake -> truth discriminators
+        self.d_FT_lst = [self.__discriminator__() for _ in atts]
 
         # disriminator A and disriminator B
-        self.d_A.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
-        self.d_B.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
+        for (disc_TF, disc_FT) in zip(self.d_TF_lst, self.d_FT_lst):
+            disc_TF.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
+            disc_FT.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
 
-        # Generator A->B and Generator B->A
-        self.g_AB = self.__generator__()
-        self.g_BA = self.__generator__()
+        # build generator truth->fake and generators fake->truth
+        self.g_TF_lst = [self.__generator__() for _ in atts]
+        self.g_FT_lst = [self.__generator__() for _ in atts]
 
-        # input A, B
-        input_A = Input(shape=self.img_shape)
-        input_B = Input(shape=self.img_shape)
+        # ground truth input + fake input for each network
+        self.input_T_lst = [Input(shape=self.img_shape) for _ in atts]
+        self.input_F_lst = [Input(shape=self.img_shape) for _ in atts]
 
         # generate A from A->B and B from B->A from original input (identity)
-        selfgen_A = self.g_BA(input_A)
-        selfgen_B = self.g_AB(input_B)
+        selfgen_T_lst = [g_FT(input_T) for (input_T, g_FT) in zip(self.input_T_lst, self.g_FT_lst)]
+        selfgen_F_lst = [g_TF(input_F) for (input_F, g_FT) in zip(self.input_F_lst, self.g_TF_lst)]
 
         # generate fake A from B->A, B from A->B
-        gen_A = self.g_BA(input_B) 
-        gen_B = self.g_AB(input_A)
+        # fake generations
+        gen_T_lst = [g_FT(input_F) for (input_F, g_FT) in zip(self.input_F_lst, self.g_FT_lst)]
+        gen_F_lst = [g_TF(input_T) for (input_T, g_TF) in zip(self.input_T_lst, self.g_TF_lst)]
 
         # regenerate A, B from fake gen_A and gen_B
-        regen_A = self.g_BA(gen_B)
-        regen_B = self.g_AB(gen_A)
+        regen_T_lst = [g_TF(gen_F) for (g_TF, gen_F) in zip(self.g_TF_lst, gen_F_lst)]
+        regen_F_lst = [g_FT(gen_T) for (g_FT, gen_T) in zip(self.g_FT_lst, gen_T_lst)]
 
         # check if fake images are 'real'
-        class_gen_A = self.d_A(gen_A)
-        class_gen_B = self.d_B(gen_B)
+        class_gen_T_lst = [d_T(gen_T) for (d_T, gen_T) in zip(self.d_TF_lst, gen_T_lst)]
+        class_gen_F_lst = [d_F(gen_T) for (d_F, gen_F) in zip(self.d_FT_lst, gen_F_lst)]
 
         # build model with all components
-        self.GAN = Model(
+        self.GANs = [ 
+                Model(
                 inputs=[img_A, img_B],
                 outputs=[class_gen_A, class_gen_B, regen_A, regen_B, selfgen_A, selfgen_B])
+                for (img_A, img_B, class_gen_A, class_gen_B, regen_A, regen_B, selfgen_A, selfgen_B)
+                in zip(self.input_T_lst, self.input_F_lst, class_gen_T_lst, class_gen_F_lst,
+                    regen_T_lst, regen_F_lst, selfgen_T_lst, selfgen_F_lst)]
         self.GAN.compile(
                 loss=['mse' for i in range(6)],
                 loss_weights=[1,1,10,10,1,1],
