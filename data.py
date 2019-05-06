@@ -1,10 +1,10 @@
 import os
-import Image
+from PIL import Image
 
 import numpy as np
 import tensorflow as tf
 
-class CelebDataset(object):
+class CelebData(object):
     def __init__(self, data_dir, target_atts, method='train'):
         # one hot encoding labels
         self.att_encoding = {
@@ -25,19 +25,21 @@ class CelebDataset(object):
         # load labels, image names from csv
         attrs_file = os.path.join(data_dir, 'list_attr_celeba.csv')
         img_dir = os.path.join(data_dir, 'img_align_celeba')
-        img_names = np.loadtxt(attrs_file, delimeter=',', skiprows=1, usecols=[0], dtype=np.str)
-        img_paths = [os.path.join(img_dir, name) for name in img_names)]
+        img_names = np.loadtxt(attrs_file, delimiter=',', skiprows=1, usecols=[0], dtype=np.str)
+        img_paths = [os.path.join(img_dir, name) for name in img_names]
         att_cols = [self.att_encoding[att]+1 for att in target_atts]
-        labels = np.loadtxt(attrs_file, skiprows=1, usecols=att_cols, dtype=np.int64)
-        
-        def normalize(img,label):
+        labels = np.loadtxt(attrs_file, delimiter=',', skiprows=1, usecols=att_cols, dtype=np.int64)
+
+        def normalize(img_file,label):
             # resize img to (64,64) + normalize pixels in images to (-1,1)
             # normalize labels to (0,1)
-            img = img.resize((64,64), Image.BICUBIC)
+            img = tf.read_file(img_file)
+            img = tf.image.decode_jpeg(img, 3)
+            img = tf.image.resize_images(img, [64,64], tf.image.ResizeMethod.BICUBIC)
             img = img / 127.5 - 1
             label = (label + 1) // 2
             return img, label
-        
+
         # train/test/val split
         if method == 'test':
             drop_remainder = False
@@ -53,10 +55,43 @@ class CelebDataset(object):
 
         # setup dataset
         dataset = tf.data.Dataset.from_tensor_slices((img_paths, labels))
-        dataset.map(normalize)
+        dataset = dataset.map(normalize)
         if method != 'test': dataset.shuffle(2048)
 
+        # instance variables
+        self._dataset = dataset
+        self._num_img = len(img_paths)
 
-        self.dataset = dataset
-        self.num_img = len(img_paths)
+    def __iterator__(self):
+        self._iterator = self._dataset.make_initializable_iterator()
+        return self._iterator
 
+    def __num_imgs__(self):
+        return self._num_img
+
+    def __dataset__(self):
+        return self._dataset
+
+class DataTester():
+    # test method to ensure data loaded properly
+    def test(self):
+        def denormalize(img):
+            img = (img + 1) * 127.5
+            img = np.uint8(img)
+            return img
+        
+        test_atts = ['Bangs']
+        data = CelebData('./data', test_atts, method='val')
+        it = data.__iterator__()
+        sample_batch = it.get_next()
+        img = sample_batch[0]
+        print(img.shape)
+        
+        sess = tf.Session()
+        sess.run(it.initializer)
+        with sess.as_default():
+            eval_img = img.eval()
+            _im_obj = denormalize(np.asarray(eval_img))
+            print(_im_obj)
+            im_obj = Image.fromarray(_im_obj)
+            im_obj.show()
