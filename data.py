@@ -4,7 +4,7 @@ from PIL import Image
 import numpy as np
 import tensorflow as tf
 
-class CelebData(object):
+class CelebDataLoader(object):
     def __init__(self, data_dir, target_atts, method='train'):
         # one hot encoding labels
         self.att_encoding = {
