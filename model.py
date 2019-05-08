@@ -24,7 +24,7 @@ class o2mCycleGAN():
         self.data_dir = data_dir
         self.img_shape = (64, 64, 3)
 
-        d_s = int(64 / 2**4)
+        d_s = int(64 / 2**3)
         self.d_out_shape = (d_s, d_s, 1)
 
         optimizer = keras.optimizers.Adam(0.0001, 0.5)
@@ -66,6 +66,7 @@ class o2mCycleGAN():
         class_gen_F_lst = [d_F(gen_F) for (d_F, gen_F) in zip(self.d_F_lst, gen_F_lst)]
 
         # build model with all components
+        # GAN[i] => generates an image with label[i] = 1 using images with label[i] = 0
         self.GANs = [ 
                 Model(
                 inputs=[img_A, img_B],
@@ -139,67 +140,50 @@ class o2mCycleGAN():
 
         return Model(init_layer, out_layer)
 
-    def build_data(self, method='train'):
-        data_loader = CelebDataLoader(self.data_dir, self.atts, method=method)
-        data_it = data_loader.__iterator__()
-        _img, _label = data_it.get_next()
-        session = tf.Session()
-        session.run(data_it.initializer)
-
-        data = {}
-        for label_i in range(self.n_atts):
-            data[label_i] = []
-
-        while True:
-            try:
-                img, label = _img.eval(session=session), _label.eval(session=session)
-                _img, _label = data_it.get_next()
-            except tf.errors.OutOfRangeError:
-                break
-
-            for (i,cls) in enumerate(label):
-                if cls == 1:
-                    data[i].append(img)
-        return data
-        
-        
-
     def train(self, epochs=50, batch_size=1):
-        data = self.build_data()
+        # load dataset twice: A = truth, B = fake. Skip if label_A[i] == label_B[i]
+        data_loader_A = CelebDataLoader(self.data_dir, self.atts)
+        data_loader_B = CelebDataLoader(self.data_dir, self.atts)
 
-        valid = np.ones((batch_size,) + self.d_out_shape)
-        fake = np.zeros((batch_size,) + self.d_out_shape)
+
         for epoch in range(epochs):
-            for label in data.keys():
+            for label in range(self.n_atts):
+                valid = np.ones((batch_size,) + self.d_out_shape)
+                fake = np.zeros((batch_size,) + self.d_out_shape)
+
                 d_T = self.d_T_lst[label]
                 d_F = self.d_F_lst[label]
+
                 g_TF = self.g_TF_lst[label]
                 g_FT = self.g_FT_lst[label]
 
                 corr_att = self.atts[label]
 
                 # for label i, generate fake for all labels != i
-                for img_A in data[label]:
-                    for fake_label in range(self.n_atts):
-                        if fake_label == label: continue
-                        for img_B in data[fake_label]:
-                            img_A = data[label]
 
-                            fake_F = g_TF.predict(img_A)
-                            fake_T = g_FT.predict(img_B)
+                for i, (img_A, label_A) in enumerate(data_loader_A):
+                    if label_A[label] == 0: continue
+                    img_A = np.expand_dims(img_A, axis=0)
 
-                            dT_loss_real = d_T.tain_on_batch(img_A, valid)
-                            dT_loss_fake = d_T.train_on_batch(fake_T, fake)
-                            dT_loss = 0.5 * np.add(dT_loss_real, dT_loss_fake)
+                    for j, (img_B, label_B) in enumerate(data_loader_B):
+                        if label_B[label] == 1: continue
 
-                            dF_loss_real = d_F.train_on_batch(img_B, valid)
-                            dF_loss_fake = d_T.train_on_batch(fake_F, fake)
-                            dF_loss = 0.5 * np.add(dF_loss_real, dF_loss_fake)
+                        img_B = np.expand_dims(img_B, axis=0)
+                        fake_F = g_TF.predict(img_A)
+                        fake_T = g_FT.predict(img_B)
 
-                            d_loss = 0.5 * np.add(dT_loss, dF_loss)
+                        dT_loss_real = d_T.train_on_batch(img_A, valid)
+                        dT_loss_fake = d_T.train_on_batch(fake_T, fake)
+                        dT_loss = 0.5 * np.add(dT_loss_real, dT_loss_fake)
 
-                            # Train Gens
-                            g_loss = self.GANs[label].train_on_batch([img_A, img_B], [valid, valid, img_A, img_B, img_A, img_B])
+                        dF_loss_real = d_F.train_on_batch(img_B, valid)
+                        dF_loss_fake = d_T.train_on_batch(fake_F, fake)
+                        dF_loss = 0.5 * np.add(dF_loss_real, dF_loss_fake)
+
+                        d_loss = 0.5 * np.add(dT_loss, dF_loss)
+
+                        # Train Gens
+                        g_loss = self.GANs[label].train_on_batch([img_A, img_B], [valid, valid, img_A, img_B, img_A, img_B])
 
                 print ("[Epoch %d/%d] [label: %d]" % (epoch, epochs, label))
                 # print ("[Epoch %d/%d] [label: %d] [D loss: %f, acc: %3d%%] [G loss: %05f, adv: %05f, recon: %05f, id: %05f]" \
