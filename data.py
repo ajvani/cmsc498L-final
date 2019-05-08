@@ -4,8 +4,9 @@ from PIL import Image
 import numpy as np
 import tensorflow as tf
 
-class CelebDataLoader(object):
+class CelebData(object):
     def __init__(self, data_dir, target_atts, method='train'):
+        self._sess = None
         # one hot encoding labels
         self.att_encoding = {
                 '5_o_Clock_Shadow': 0, 'Arched_Eyebrows': 1, 'Attractive': 2,
@@ -47,8 +48,8 @@ class CelebDataLoader(object):
             img_paths = img_paths[182637:]
             labels = labels[182637:]
         elif method == 'val':
-            img_paths = img_paths[182000:182637]
-            labels = labels[182000:182637]
+            img_paths = img_paths[182000:182010]
+            labels = labels[182000:182010]
         else:
             img_paths = img_paths[:182000]
             labels = labels[:182000]
@@ -56,15 +57,21 @@ class CelebDataLoader(object):
         # setup dataset
         dataset = tf.data.Dataset.from_tensor_slices((img_paths, labels))
         dataset = dataset.map(normalize)
-        if method != 'test': dataset.shuffle(2048)
+        if method != 'test': dataset.shuffle(50)
 
         # instance variables
         self._dataset = dataset
         self._num_img = len(img_paths)
 
-    def __iterator__(self):
+        # setup iterator stuff
+        self.__reset__()
+
+    def __reset__(self):
+        feed_dict = {}
+        self._sess = tf.Session()
         self._iterator = self._dataset.make_initializable_iterator()
-        return self._iterator
+        self._batch_op = self._iterator.get_next()
+        self._sess.run(self._iterator.initializer, feed_dict=feed_dict)
 
     def __num_imgs__(self):
         return self._num_img
@@ -72,26 +79,17 @@ class CelebDataLoader(object):
     def __dataset__(self):
         return self._dataset
 
-class DataTester():
-    # test method to ensure data loaded properly
-    def test(self):
-        def denormalize(img):
-            img = (img + 1) * 127.5
-            img = np.uint8(img)
-            return img
-        
-        test_atts = ['Bangs']
-        data = CelebData('./data', test_atts, method='val')
-        it = data.__iterator__()
-        sample_batch = it.get_next()
-        img = sample_batch[0]
-        print(img.shape)
-        
-        sess = tf.Session()
-        sess.run(it.initializer)
-        with sess.as_default():
-            eval_img = img.eval()
-            _im_obj = denormalize(np.asarray(eval_img))
-            print(_im_obj)
-            im_obj = Image.fromarray(_im_obj)
-            im_obj.show()
+    def __del__(self):
+        if self._sess:
+            self._sess.close()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            b = self._sess.run(self._batch_op)
+        except:
+            raise StopIteration
+        else:
+            return b
