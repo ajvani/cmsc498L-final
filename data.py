@@ -45,19 +45,21 @@ class CelebDataLoader(object):
         if method == 'test':
             drop_remainder = False
             repeat = 1
-            img_paths = img_paths[182637:]
-            labels = labels[182637:]
+            # img_paths = img_paths[182637:]
+            # labels = labels[182637:]
+            img_paths = img_paths[202000:]
+            labels = labels[202000:]
         elif method == 'val':
             img_paths = img_paths[182000:182010]
             labels = labels[182000:182010]
         else:
-            img_paths = img_paths[:182000]
-            labels = labels[:182000]
+            img_paths = img_paths[:1000]
+            labels = labels[:1000]
 
         # setup dataset
         dataset = tf.data.Dataset.from_tensor_slices((img_paths, labels))
         dataset = dataset.map(normalize)
-        if method != 'test': dataset.shuffle(50)
+        dataset.shuffle(50)
 
         # instance variables
         self._dataset = dataset
